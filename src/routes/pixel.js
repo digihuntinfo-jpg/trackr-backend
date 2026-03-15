@@ -147,8 +147,7 @@ router.post('/', requireAuth, function(req, res) {
     name: body.name,
     domain: body.domain || null,
     workspace_id: body.workspace_id || null,
-    user_id: req.user.id,
-    active: true
+    user_id: req.user.id
   };
 
   supabase.from('pixels').insert(row).select().single()
