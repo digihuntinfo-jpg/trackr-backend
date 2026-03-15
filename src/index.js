@@ -28,6 +28,15 @@ var dashCors = cors({
 var openCors = cors();
 
 app.use(express.json({ limit: '10kb' }));
+app.use(express.text({ limit: '10kb', type: 'text/plain' }));
+
+// Parse text/plain body as JSON (sendBeacon sends as text/plain to avoid CORS preflight)
+app.use(function(req, res, next) {
+  if (typeof req.body === 'string') {
+    try { req.body = JSON.parse(req.body); } catch(e) {}
+  }
+  next();
+});
 
 var limiter = rateLimit({ windowMs: 60000, max: 100, standardHeaders: true });
 app.use('/api/', limiter);
