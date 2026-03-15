@@ -2,32 +2,51 @@ var router = require('express').Router();
 var supabase = require('../supabase');
 var { requireAuth } = require('../middleware/auth');
 
+// Helper: resolve PX_ text ID to UUID
+function resolvePixelId(pixelIdText, callback) {
+  supabase.from('pixels').select('id').eq('pixel_id', pixelIdText).single()
+    .then(function(result) {
+      if (result.error || !result.data) {
+        callback(null);
+      } else {
+        callback(result.data.id);
+      }
+    })
+    .catch(function() {
+      callback(null);
+    });
+}
+
 // POST /click - track pageview/click from pixel.js (open, no auth)
 router.post('/click', function(req, res) {
   var body = req.body;
   if (!body.pixel_id) return res.status(400).json({ error: 'Missing pixel_id' });
 
-  var row = {
-    pixel_id: body.pixel_id,
-    click_id: body.click_id || body.visitor_id || null,
-    platform: body.platform || null,
-    landing_url: body.page_url || body.landing_url || null,
-    ip: req.ip,
-    user_agent: req.headers['user-agent'] || null
-  };
+  resolvePixelId(body.pixel_id, function(uuid) {
+    if (!uuid) return res.status(404).json({ error: 'Pixel not found' });
 
-  supabase.from('clicks').insert(row)
-    .then(function(result) {
-      if (result.error) {
-        console.error('[pixel/click]', result.error.message);
-        return res.status(500).json({ error: result.error.message });
-      }
-      res.json({ ok: true });
-    })
-    .catch(function(e) {
-      console.error('[pixel/click]', e.message);
-      res.status(500).json({ error: e.message });
-    });
+    var row = {
+      pixel_id: uuid,
+      click_id: body.click_id || body.visitor_id || null,
+      platform: body.platform || null,
+      landing_url: body.page_url || body.landing_url || null,
+      ip: req.ip,
+      user_agent: req.headers['user-agent'] || null
+    };
+
+    supabase.from('clicks').insert(row)
+      .then(function(result) {
+        if (result.error) {
+          console.error('[pixel/click]', result.error.message);
+          return res.status(500).json({ error: result.error.message });
+        }
+        res.json({ ok: true });
+      })
+      .catch(function(e) {
+        console.error('[pixel/click]', e.message);
+        res.status(500).json({ error: e.message });
+      });
+  });
 });
 
 // POST /lead - capture lead from pixel.js (open, no auth)
@@ -35,28 +54,32 @@ router.post('/lead', function(req, res) {
   var body = req.body;
   if (!body.pixel_id) return res.status(400).json({ error: 'Missing pixel_id' });
 
-  var row = {
-    pixel_id: body.pixel_id,
-    click_id: body.click_id || body.visitor_id || null,
-    email: body.email || null,
-    phone: body.phone || null,
-    name: body.name || null,
-    source_url: body.page_url || body.source_url || null,
-    meta: body.meta || {}
-  };
+  resolvePixelId(body.pixel_id, function(uuid) {
+    if (!uuid) return res.status(404).json({ error: 'Pixel not found' });
 
-  supabase.from('leads').insert(row).select().single()
-    .then(function(result) {
-      if (result.error) {
-        console.error('[pixel/lead]', result.error.message);
-        return res.status(500).json({ error: result.error.message });
-      }
-      res.json({ ok: true, lead_id: result.data.id });
-    })
-    .catch(function(e) {
-      console.error('[pixel/lead]', e.message);
-      res.status(500).json({ error: e.message });
-    });
+    var row = {
+      pixel_id: uuid,
+      click_id: body.click_id || body.visitor_id || null,
+      email: body.email || null,
+      phone: body.phone || null,
+      name: body.name || null,
+      source_url: body.page_url || body.source_url || null,
+      meta: body.meta || {}
+    };
+
+    supabase.from('leads').insert(row).select().single()
+      .then(function(result) {
+        if (result.error) {
+          console.error('[pixel/lead]', result.error.message);
+          return res.status(500).json({ error: result.error.message });
+        }
+        res.json({ ok: true, lead_id: result.data.id });
+      })
+      .catch(function(e) {
+        console.error('[pixel/lead]', e.message);
+        res.status(500).json({ error: e.message });
+      });
+  });
 });
 
 // GET / - list pixels for workspace (auth required)
