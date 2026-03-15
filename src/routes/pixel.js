@@ -27,7 +27,7 @@ router.post('/click', function(req, res) {
 
     var row = {
       pixel_id: uuid,
-      click_id: body.click_id || body.visitor_id || null,
+      click_id: body.click_id || null,
       platform: body.platform || null,
       landing_url: body.page_url || body.landing_url || null,
       ip: req.ip,
@@ -59,7 +59,7 @@ router.post('/lead', function(req, res) {
 
     var row = {
       pixel_id: uuid,
-      click_id: body.click_id || body.visitor_id || null,
+      click_id: body.click_id || null,
       email: body.email || null,
       phone: body.phone || null,
       name: body.name || null,
