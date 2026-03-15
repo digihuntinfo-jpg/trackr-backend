@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-
 const authRoutes = require('./routes/auth');
 const adsRoutes = require('./routes/ads');
 const reportsRoutes = require('./routes/reports');
@@ -12,9 +11,10 @@ const revenueRoutes = require('./routes/revenue');
 const workspaceRoutes = require('./routes/workspace');
 
 const app = express();
-
 app.use(helmet());
-app.use(cors({
+
+// Main CORS — dashboard only
+var dashCors = cors({
   origin: [
     'https://trackr.ga4specialist.com',
     'https://ga4specialist.com',
@@ -22,11 +22,22 @@ app.use(cors({
     'http://localhost:5173'
   ],
   credentials: true
-}));
+});
+
+// Open CORS — pixel endpoints called from any client site
+var openCors = cors();
+
 app.use(express.json({ limit: '10kb' }));
 
-const limiter = rateLimit({ windowMs: 60000, max: 100, standardHeaders: true });
+var limiter = rateLimit({ windowMs: 60000, max: 100, standardHeaders: true });
 app.use('/api/', limiter);
+
+// Pixel click + lead endpoints: open CORS (any domain)
+app.use('/api/pixel/click', openCors);
+app.use('/api/pixel/lead', openCors);
+
+// Everything else: dashboard CORS only
+app.use(dashCors);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/ads', adsRoutes);
@@ -48,7 +59,7 @@ app.use(function(err, req, res, next) {
   res.status(err.status || 500).json({ error: err.message || 'Internal error' });
 });
 
-const PORT = process.env.PORT || 4000;
+var PORT = process.env.PORT || 4000;
 app.listen(PORT, function() {
   console.log('Trackr backend running on port ' + PORT);
 });
