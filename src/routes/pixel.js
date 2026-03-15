@@ -17,6 +17,29 @@ function resolvePixelId(pixelIdText, callback) {
     });
 }
 
+// Helper: extract tracking metadata from request body
+function extractMeta(body) {
+  return {
+    utm_source: body.utm_source || '',
+    utm_medium: body.utm_medium || '',
+    utm_campaign: body.utm_campaign || '',
+    utm_content: body.utm_content || '',
+    utm_term: body.utm_term || '',
+    fbclid: body.fbclid || '',
+    gclid: body.gclid || '',
+    ttclid: body.ttclid || '',
+    referrer: body.referrer || '',
+    page_url: body.page_url || body.landing_url || '',
+    page_path: body.page_path || '',
+    visitor_id: body.visitor_id || '',
+    session_id: body.session_id || '',
+    screen_width: body.screen_width || null,
+    screen_height: body.screen_height || null,
+    language: body.language || '',
+    timezone: body.timezone || ''
+  };
+}
+
 // POST /click - track pageview/click from pixel.js (open, no auth)
 router.post('/click', function(req, res) {
   var body = req.body;
@@ -28,7 +51,7 @@ router.post('/click', function(req, res) {
     var row = {
       pixel_id: uuid,
       click_id: body.click_id || null,
-      platform: body.platform || null,
+      platform: body.fbclid ? 'meta' : body.gclid ? 'google' : body.platform || null,
       landing_url: body.page_url || body.landing_url || null,
       ip: req.ip,
       user_agent: req.headers['user-agent'] || null
@@ -57,6 +80,12 @@ router.post('/lead', function(req, res) {
   resolvePixelId(body.pixel_id, function(uuid) {
     if (!uuid) return res.status(404).json({ error: 'Pixel not found' });
 
+    var meta = extractMeta(body);
+    // Merge any existing meta from body
+    if (body.meta && typeof body.meta === 'object') {
+      Object.keys(body.meta).forEach(function(k) { meta[k] = body.meta[k]; });
+    }
+
     var row = {
       pixel_id: uuid,
       click_id: body.click_id || null,
@@ -64,7 +93,7 @@ router.post('/lead', function(req, res) {
       phone: body.phone || null,
       name: body.name || null,
       source_url: body.page_url || body.source_url || null,
-      meta: body.meta || {}
+      meta: meta
     };
 
     supabase.from('leads').insert(row).select().single()
