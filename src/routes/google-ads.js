@@ -96,7 +96,7 @@ router.get('/accounts', requireAuth, function(req, res) {
 
   console.log('[google/accounts] Fetching with dev token:', GOOGLE_DEVELOPER_TOKEN ? GOOGLE_DEVELOPER_TOKEN.substring(0, 6) + '...' : 'MISSING');
 
-  safeFetch('https://googleads.googleapis.com/v17/customers:listAccessibleCustomers', {
+  safeFetch('https://googleads.googleapis.com/v23/customers:listAccessibleCustomers', {
     headers: {
       'Authorization': 'Bearer ' + token,
       'developer-token': GOOGLE_DEVELOPER_TOKEN
@@ -113,7 +113,7 @@ router.get('/accounts', requireAuth, function(req, res) {
 
     // Fetch details for each customer
     var promises = customerIds.map(function(custId) {
-      return safeFetch('https://googleads.googleapis.com/v17/customers/' + custId, {
+      return safeFetch('https://googleads.googleapis.com/v23/customers/' + custId, {
         headers: {
           'Authorization': 'Bearer ' + token,
           'developer-token': GOOGLE_DEVELOPER_TOKEN
@@ -147,7 +147,7 @@ router.get('/accounts', requireAuth, function(req, res) {
       // For each MCC, fetch its client accounts
       var mccPromises = managers.map(function(mcc) {
         var query = 'SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.manager, customer_client.status FROM customer_client WHERE customer_client.status = "ENABLED"';
-        return safeFetch('https://googleads.googleapis.com/v17/customers/' + mcc.customer_id + '/googleAds:searchStream', {
+        return safeFetch('https://googleads.googleapis.com/v23/customers/' + mcc.customer_id + '/googleAds:searchStream', {
           method: 'POST',
           headers: {
             'Authorization': 'Bearer ' + token,
@@ -232,7 +232,7 @@ router.get('/campaigns', requireAuth, function(req, res) {
 
   var cleanId = customerId.replace(/-/g, '');
 
-  safeFetch('https://googleads.googleapis.com/v17/customers/' + cleanId + '/googleAds:searchStream', {
+  safeFetch('https://googleads.googleapis.com/v23/customers/' + cleanId + '/googleAds:searchStream', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + token,
