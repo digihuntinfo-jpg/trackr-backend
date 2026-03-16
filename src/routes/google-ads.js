@@ -1,31 +1,53 @@
 var router = require('express').Router();
 var { requireAuth } = require('../middleware/auth');
+var fetch = require('node-fetch');
 
-// Google Ads API config - UPDATE THESE after GCP setup
-var GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'YOUR_CLIENT_ID';
-var GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'YOUR_CLIENT_SECRET';
-var GOOGLE_DEVELOPER_TOKEN = process.env.GOOGLE_DEVELOPER_TOKEN || 'YOUR_DEV_TOKEN';
+// Google Ads API config
+var GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+var GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || '';
+var GOOGLE_DEVELOPER_TOKEN = process.env.GOOGLE_DEVELOPER_TOKEN || '';
 var GOOGLE_REDIRECT_URI = 'https://trackr.ga4specialist.com/';
+
+// Helper: safe JSON parse from fetch response
+function safeFetch(url, opts) {
+  return fetch(url, opts).then(function(r) {
+    var ct = r.headers.get('content-type') || '';
+    if (!r.ok) {
+      if (ct.indexOf('application/json') > -1) {
+        return r.json().then(function(d) {
+          var msg = (d.error && d.error.message) || d.error_description || JSON.stringify(d.error) || 'API error ' + r.status;
+          return Promise.reject(new Error(msg));
+        });
+      }
+      return r.text().then(function(t) {
+        return Promise.reject(new Error('HTTP ' + r.status + ': ' + t.substring(0, 200)));
+      });
+    }
+    if (ct.indexOf('application/json') > -1) {
+      return r.json();
+    }
+    return r.text().then(function(t) {
+      try { return JSON.parse(t); } catch(e) {
+        return Promise.reject(new Error('Non-JSON response: ' + t.substring(0, 200)));
+      }
+    });
+  });
+}
 
 // ─── OAuth: Exchange auth code for tokens ────────────
 router.post('/connect', requireAuth, function(req, res) {
   var code = req.body.code;
   if (!code) return res.status(400).json({ error: 'Missing auth code' });
 
-  // Exchange code for tokens
-  var fetch = require('node-fetch');
-  fetch('https://oauth2.googleapis.com/token', {
+  safeFetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code: code,
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
-      redirect_uri: GOOGLE_REDIRECT_URI,
-      grant_type: 'authorization_code'
-    }).toString()
+    body: 'code=' + encodeURIComponent(code)
+      + '&client_id=' + encodeURIComponent(GOOGLE_CLIENT_ID)
+      + '&client_secret=' + encodeURIComponent(GOOGLE_CLIENT_SECRET)
+      + '&redirect_uri=' + encodeURIComponent(GOOGLE_REDIRECT_URI)
+      + '&grant_type=authorization_code'
   })
-  .then(function(r) { return r.json(); })
   .then(function(tokens) {
     if (tokens.error) {
       return res.status(400).json({ error: tokens.error_description || tokens.error });
@@ -37,6 +59,7 @@ router.post('/connect', requireAuth, function(req, res) {
     });
   })
   .catch(function(e) {
+    console.error('[google/connect]', e.message);
     res.status(500).json({ error: e.message });
   });
 });
@@ -46,28 +69,22 @@ router.post('/refresh', requireAuth, function(req, res) {
   var refreshToken = req.body.refresh_token;
   if (!refreshToken) return res.status(400).json({ error: 'Missing refresh_token' });
 
-  var fetch = require('node-fetch');
-  fetch('https://oauth2.googleapis.com/token', {
+  safeFetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
-      grant_type: 'refresh_token'
-    }).toString()
+    body: 'refresh_token=' + encodeURIComponent(refreshToken)
+      + '&client_id=' + encodeURIComponent(GOOGLE_CLIENT_ID)
+      + '&client_secret=' + encodeURIComponent(GOOGLE_CLIENT_SECRET)
+      + '&grant_type=refresh_token'
   })
-  .then(function(r) { return r.json(); })
   .then(function(tokens) {
-    if (tokens.error) {
-      return res.status(400).json({ error: tokens.error_description || tokens.error });
-    }
     res.json({
       access_token: tokens.access_token,
       expires_in: tokens.expires_in
     });
   })
   .catch(function(e) {
+    console.error('[google/refresh]', e.message);
     res.status(500).json({ error: e.message });
   });
 });
@@ -77,40 +94,32 @@ router.get('/accounts', requireAuth, function(req, res) {
   var token = req.query.access_token || req.headers['x-google-token'];
   if (!token) return res.status(400).json({ error: 'Missing Google access token' });
 
-  var fetch = require('node-fetch');
+  console.log('[google/accounts] Fetching with dev token:', GOOGLE_DEVELOPER_TOKEN ? GOOGLE_DEVELOPER_TOKEN.substring(0, 6) + '...' : 'MISSING');
 
-  // First get the customer IDs accessible to this user
-  fetch('https://googleads.googleapis.com/v17/customers:listAccessibleCustomers', {
+  safeFetch('https://googleads.googleapis.com/v17/customers:listAccessibleCustomers', {
     headers: {
       'Authorization': 'Bearer ' + token,
       'developer-token': GOOGLE_DEVELOPER_TOKEN
     }
   })
-  .then(function(r) { return r.json(); })
   .then(function(data) {
-    if (data.error) {
-      return res.status(400).json({ error: data.error.message || 'Failed to list accounts' });
-    }
-
     var customerIds = (data.resourceNames || []).map(function(rn) {
       return rn.replace('customers/', '');
     });
 
     if (!customerIds.length) {
-      return res.json({ accounts: [] });
+      return res.json({ accounts: [], hierarchy: [], managers: [] });
     }
 
     // Fetch details for each customer
     var promises = customerIds.map(function(custId) {
-      return fetch('https://googleads.googleapis.com/v17/customers/' + custId, {
+      return safeFetch('https://googleads.googleapis.com/v17/customers/' + custId, {
         headers: {
           'Authorization': 'Bearer ' + token,
           'developer-token': GOOGLE_DEVELOPER_TOKEN
         }
       })
-      .then(function(r) { return r.json(); })
       .then(function(cust) {
-        if (cust.error) return null;
         return {
           customer_id: custId,
           name: cust.descriptiveName || custId,
@@ -120,20 +129,25 @@ router.get('/accounts', requireAuth, function(req, res) {
           status: cust.status || 'UNKNOWN'
         };
       })
-      .catch(function() { return null; });
+      .catch(function(e) {
+        console.warn('[google/accounts] Failed to fetch customer ' + custId + ':', e.message);
+        return null;
+      });
     });
 
     return Promise.all(promises).then(function(accounts) {
       var valid = accounts.filter(function(a) { return a !== null; });
-
-      // Separate MCC (manager) accounts from client accounts
       var managers = valid.filter(function(a) { return a.is_manager; });
       var clients = valid.filter(function(a) { return !a.is_manager; });
+
+      if (!managers.length) {
+        return res.json({ accounts: clients, hierarchy: [], managers: [] });
+      }
 
       // For each MCC, fetch its client accounts
       var mccPromises = managers.map(function(mcc) {
         var query = 'SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.manager, customer_client.status FROM customer_client WHERE customer_client.status = "ENABLED"';
-        return fetch('https://googleads.googleapis.com/v17/customers/' + mcc.customer_id + '/googleAds:searchStream', {
+        return safeFetch('https://googleads.googleapis.com/v17/customers/' + mcc.customer_id + '/googleAds:searchStream', {
           method: 'POST',
           headers: {
             'Authorization': 'Bearer ' + token,
@@ -142,10 +156,9 @@ router.get('/accounts', requireAuth, function(req, res) {
           },
           body: JSON.stringify({ query: query })
         })
-        .then(function(r) { return r.json(); })
         .then(function(result) {
           var clientAccts = [];
-          (result || []).forEach(function(batch) {
+          (Array.isArray(result) ? result : [result]).forEach(function(batch) {
             (batch.results || []).forEach(function(row) {
               var cc = row.customerClient;
               if (cc && !cc.manager) {
@@ -163,7 +176,10 @@ router.get('/accounts', requireAuth, function(req, res) {
           });
           return { mcc: mcc, clients: clientAccts };
         })
-        .catch(function() { return { mcc: mcc, clients: [] }; });
+        .catch(function(e) {
+          console.warn('[google/accounts] MCC fetch failed for ' + mcc.customer_id + ':', e.message);
+          return { mcc: mcc, clients: [] };
+        });
       });
 
       return Promise.all(mccPromises).then(function(hierarchy) {
@@ -176,6 +192,7 @@ router.get('/accounts', requireAuth, function(req, res) {
     });
   })
   .catch(function(e) {
+    console.error('[google/accounts]', e.message);
     res.status(500).json({ error: e.message });
   });
 });
@@ -191,7 +208,6 @@ router.get('/campaigns', requireAuth, function(req, res) {
     return res.status(400).json({ error: 'Missing access_token or customer_id' });
   }
 
-  // Default date range: last 30 days
   if (!since) {
     var d = new Date();
     d.setDate(d.getDate() - 30);
@@ -214,11 +230,9 @@ router.get('/campaigns', requireAuth, function(req, res) {
     + 'WHERE segments.date BETWEEN "' + since + '" AND "' + until + '" '
     + 'ORDER BY metrics.cost_micros DESC';
 
-  var fetch = require('node-fetch');
-  // Remove dashes from customer ID for API
   var cleanId = customerId.replace(/-/g, '');
 
-  fetch('https://googleads.googleapis.com/v17/customers/' + cleanId + '/googleAds:searchStream', {
+  safeFetch('https://googleads.googleapis.com/v17/customers/' + cleanId + '/googleAds:searchStream', {
     method: 'POST',
     headers: {
       'Authorization': 'Bearer ' + token,
@@ -227,14 +241,9 @@ router.get('/campaigns', requireAuth, function(req, res) {
     },
     body: JSON.stringify({ query: query })
   })
-  .then(function(r) { return r.json(); })
   .then(function(result) {
-    if (result.error) {
-      return res.status(400).json({ error: result.error.message || 'GAQL query failed' });
-    }
-
     var campaigns = [];
-    (result || []).forEach(function(batch) {
+    (Array.isArray(result) ? result : [result]).forEach(function(batch) {
       (batch.results || []).forEach(function(row) {
         var c = row.campaign || {};
         var m = row.metrics || {};
@@ -246,11 +255,10 @@ router.get('/campaigns', requireAuth, function(req, res) {
           status: c.status || 'UNKNOWN',
           channel_type: c.advertisingChannelType || '',
           platform: 'google',
-          // Convert micros to actual values
           spend: (m.costMicros || 0) / 1000000,
           impressions: m.impressions || 0,
           clicks: m.clicks || 0,
-          ctr: (m.ctr || 0) * 100, // Google returns decimal, convert to %
+          ctr: (m.ctr || 0) * 100,
           cpm: (m.averageCpm || 0) / 1000000,
           cpc: (m.averageCpc || 0) / 1000000,
           conversions: m.conversions || 0,
@@ -263,7 +271,7 @@ router.get('/campaigns', requireAuth, function(req, res) {
       });
     });
 
-    // Aggregate campaigns (GAQL returns per-day rows, need to sum)
+    // Aggregate campaigns (GAQL returns per-day rows)
     var campMap = {};
     campaigns.forEach(function(c) {
       if (!campMap[c.id]) {
@@ -282,7 +290,6 @@ router.get('/campaigns', requireAuth, function(req, res) {
       campMap[c.id].conversions_value += c.conversions_value;
     });
 
-    // Recalculate derived metrics
     var finalCamps = Object.values(campMap).map(function(c) {
       c.ctr = c.impressions > 0 ? (c.clicks / c.impressions * 100) : 0;
       c.cpm = c.impressions > 0 ? (c.spend / c.impressions * 1000) : 0;
@@ -294,66 +301,7 @@ router.get('/campaigns', requireAuth, function(req, res) {
     res.json({ campaigns: finalCamps });
   })
   .catch(function(e) {
-    res.status(500).json({ error: e.message });
-  });
-});
-
-// ─── Fetch daily campaign data for charts ────────────
-router.get('/daily', requireAuth, function(req, res) {
-  var token = req.query.access_token || req.headers['x-google-token'];
-  var customerId = req.query.customer_id;
-  var since = req.query.since;
-  var until = req.query.until;
-
-  if (!token || !customerId) {
-    return res.status(400).json({ error: 'Missing access_token or customer_id' });
-  }
-
-  var query = 'SELECT '
-    + 'segments.date, '
-    + 'metrics.cost_micros, metrics.impressions, metrics.clicks, '
-    + 'metrics.conversions '
-    + 'FROM campaign '
-    + 'WHERE segments.date BETWEEN "' + since + '" AND "' + until + '" '
-    + 'ORDER BY segments.date ASC';
-
-  var fetch = require('node-fetch');
-  var cleanId = customerId.replace(/-/g, '');
-
-  fetch('https://googleads.googleapis.com/v17/customers/' + cleanId + '/googleAds:searchStream', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer ' + token,
-      'developer-token': GOOGLE_DEVELOPER_TOKEN,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ query: query })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(result) {
-    if (result.error) {
-      return res.status(400).json({ error: result.error.message });
-    }
-
-    // Aggregate by date
-    var dayMap = {};
-    (result || []).forEach(function(batch) {
-      (batch.results || []).forEach(function(row) {
-        var date = row.segments ? row.segments.date : '';
-        var m = row.metrics || {};
-        if (!dayMap[date]) {
-          dayMap[date] = { date_start: date, spend: 0, impressions: 0, clicks: 0, conversions: 0 };
-        }
-        dayMap[date].spend += (m.costMicros || 0) / 1000000;
-        dayMap[date].impressions += (m.impressions || 0);
-        dayMap[date].clicks += (m.clicks || 0);
-        dayMap[date].conversions += (m.conversions || 0);
-      });
-    });
-
-    res.json({ data: Object.values(dayMap).sort(function(a, b) { return a.date_start < b.date_start ? -1 : 1; }) });
-  })
-  .catch(function(e) {
+    console.error('[google/campaigns]', e.message);
     res.status(500).json({ error: e.message });
   });
 });
