@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth');
 const adsRoutes = require('./routes/ads');
 const reportsRoutes = require('./routes/reports');
 const pixelRoutes = require('./routes/pixel');
+var googleAdsRoutes = require('./routes/google-ads');
 const revenueRoutes = require('./routes/revenue');
 const workspaceRoutes = require('./routes/workspace');
 
@@ -54,6 +55,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/pixel', pixelRoutes);
 app.use('/api/revenue', revenueRoutes);
 app.use('/api/workspace', workspaceRoutes);
+app.use('/api/google', googleAdsRoutes);
 
 app.get('/health', function(req, res) {
   res.json({ status: 'ok', ts: Date.now() });
